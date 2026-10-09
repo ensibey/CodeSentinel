@@ -87,6 +87,16 @@ async def analyze_pr_task(ctx: Dict[str, Any], payload: Dict[str, Any]) -> Dict[
         logger.error("LangGraph agent execution encountered error (%s). Using initial state.", exc)
         final_state = initial_state
 
+    # Step 4: Publish review scorecard and inline comments to GitHub
+    from src.github_client.publisher import GitHubReviewPublisher
+    publisher = GitHubReviewPublisher(client=client)
+    publish_result = await publisher.publish_review(
+        repo_name=repo_name,
+        pr_number=pr_number,
+        head_sha=head_sha,
+        state=final_state,
+    )
+
     result = {
         "status": "completed",
         "repo_name": repo_name,
@@ -95,13 +105,14 @@ async def analyze_pr_task(ctx: Dict[str, Any], payload: Dict[str, Any]) -> Dict[
         "head_sha": head_sha,
         "files_changed_count": len(diff_files),
         "total_added_lines": total_added,
-        "stage": "phase_2_langgraph_complete",
+        "stage": "phase_3_published",
         "vulnerabilities_found": len(final_state.get("security_vulnerabilities", [])),
         "tests_generated": len(final_state.get("generated_tests", [])),
         "judge_approval": final_state.get("judge_approval", False),
         "iterations": final_state.get("iteration_count", 1),
+        "review_publication": publish_result,
     }
-    logger.info("✅ CodeSentinel Multi-Agent analysis task completed for %s #%d", repo_name, pr_number)
+    logger.info("✅ CodeSentinel Multi-Agent analysis task completed and published for %s #%d", repo_name, pr_number)
     return result
 
 

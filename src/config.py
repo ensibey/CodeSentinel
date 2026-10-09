@@ -25,14 +25,26 @@ class Settings(BaseSettings):
     PORT: int = Field(default=8000, description="API server bind port")
     LOG_LEVEL: str = Field(default="INFO", description="Logging level")
 
-    # GitHub Integration
+    # GitHub Integration (PAT or GitHub App)
     GITHUB_TOKEN: str = Field(
         default="",
-        description="GitHub Personal Access Token (PAT) or App Token for PR interactions",
+        description="GitHub Personal Access Token (PAT) or Installation Token for PR interactions",
     )
     GITHUB_WEBHOOK_SECRET: str = Field(
         default="",
         description="HMAC Secret configured in GitHub repository Webhook settings",
+    )
+    GITHUB_APP_ID: Optional[str] = Field(
+        default=None,
+        description="GitHub App ID if authenticating as a GitHub App",
+    )
+    GITHUB_APP_PRIVATE_KEY: Optional[str] = Field(
+        default=None,
+        description="GitHub App PEM Private Key string or file path",
+    )
+    GITHUB_APP_INSTALLATION_ID: Optional[str] = Field(
+        default=None,
+        description="GitHub App Installation ID for target organization/repository",
     )
 
     # Redis & ARQ Task Queue
