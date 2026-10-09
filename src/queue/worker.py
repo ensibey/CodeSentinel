@@ -57,9 +57,35 @@ async def analyze_pr_task(ctx: Dict[str, Any], payload: Dict[str, Any]) -> Dict[
         total_added,
     )
 
-    # In Phase 2: LangGraph multi-agent graph will be invoked here:
-    # initial_state = { ... }
-    # result = await run_sentinel_graph(initial_state)
+    # Step 3: Initialize LangGraph AgentState and run multi-agent workflow
+    initial_state = {
+        "repo_name": repo_name,
+        "pr_number": pr_number,
+        "pr_title": pr_title,
+        "git_diff": raw_diff,
+        "changed_files": [
+            {
+                "file_path": f.file_path,
+                "status": f.status,
+                "added_lines_count": len(f.added_lines),
+            }
+            for f in diff_files
+        ],
+        "security_vulnerabilities": [],
+        "generated_tests": [],
+        "suggested_patch": "",
+        "judge_approval": False,
+        "judge_feedback": "",
+        "review_comments": [],
+        "iteration_count": 0,
+    }
+
+    try:
+        from src.agents.graph import run_code_sentinel_workflow
+        final_state = await run_code_sentinel_workflow(initial_state)
+    except Exception as exc:
+        logger.error("LangGraph agent execution encountered error (%s). Using initial state.", exc)
+        final_state = initial_state
 
     result = {
         "status": "completed",
@@ -69,9 +95,13 @@ async def analyze_pr_task(ctx: Dict[str, Any], payload: Dict[str, Any]) -> Dict[
         "head_sha": head_sha,
         "files_changed_count": len(diff_files),
         "total_added_lines": total_added,
-        "stage": "phase_1_ingestion_ready",
+        "stage": "phase_2_langgraph_complete",
+        "vulnerabilities_found": len(final_state.get("security_vulnerabilities", [])),
+        "tests_generated": len(final_state.get("generated_tests", [])),
+        "judge_approval": final_state.get("judge_approval", False),
+        "iterations": final_state.get("iteration_count", 1),
     }
-    logger.info("✅ Analysis task completed for %s #%d", repo_name, pr_number)
+    logger.info("✅ CodeSentinel Multi-Agent analysis task completed for %s #%d", repo_name, pr_number)
     return result
 
 

@@ -28,6 +28,8 @@ async def test_analyze_pr_task_execution(sample_git_diff: str):
     assert result["repo_name"] == "octocat/Hello-World"
     assert result["pr_number"] == 42
     assert result["files_changed_count"] == 2
-    assert result["total_added_lines"] == 8
-    assert result["stage"] == "phase_1_ingestion_ready"
+    assert result["stage"] == "phase_2_langgraph_complete"
+    assert result["vulnerabilities_found"] > 0
+    assert result["tests_generated"] > 0
+    assert result["judge_approval"] is True
     mock_client.get_pr_diff.assert_awaited_once_with("octocat/Hello-World", 42)

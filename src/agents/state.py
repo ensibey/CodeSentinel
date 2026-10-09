@@ -53,3 +53,4 @@ class AgentState(TypedDict):
     judge_feedback: str
     review_comments: List[Dict[str, Any]]
     iteration_count: int
+    review_summary_markdown: Optional[str]
