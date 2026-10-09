@@ -152,6 +152,14 @@ python -m src.queue.worker
 
 Open interactive Swagger documentation at `http://localhost:8000/docs`.
 
+### 5. Run Live Local Demo Simulation
+
+Experience CodeSentinel's multi-agent workflow instantly on a simulated vulnerable PR without setting up external webhooks:
+
+```bash
+python scripts/simulate_pr_event.py
+```
+
 ---
 
 ## 🧪 Testing
@@ -179,12 +187,18 @@ CodeSentinel rigorously enforces GitHub's security standard:
   - Redis ARQ task queue with asynchronous worker.
   - PyGitHub / HTTP client for PR diff and file tree retrieval.
   - Unified diff parser with line-accurate mapping.
-- [ ] **Phase 2: LangGraph Multi-Agent Architecture**
-  - Cyclic StateGraph with AST analysis and vulnerability scanner.
+- [x] **Phase 2: LangGraph Multi-Agent Architecture**
+  - Cyclic StateGraph with AST static analysis and vulnerability scanner.
   - Automated pytest synthesis and patch generator.
-  - Judge agent with self-correction feedback loop.
-- [ ] **Phase 3: GitHub Live PR Feedback Engine**
-  - PR summary scorecard markdown table.
-  - Line-by-line inline code review comments.
-- [ ] **Phase 4: Showcase & Production Hardening**
-  - Live demo, Loom recording, and deployment guide.
+  - Judge agent with self-correction feedback loop (`iteration_count < 3`).
+  - LangSmith tracing integration.
+- [x] **Phase 3: GitHub Live PR Feedback Engine**
+  - PR summary scorecard markdown table (`POST /repos/{owner}/{repo}/pulls/{number}/reviews`).
+  - Line-by-line inline code review comments with diff hunk boundary protection.
+  - Fallback issue comment and individual reviews on API restriction.
+  - GitHub App JWT RS256 authentication and PAT support.
+- [x] **Phase 4: Production Polish & Showcase**
+  - Docker & Docker Compose (`docker-compose.yml`) multi-service orchestration.
+  - Local terminal simulator script with Rich styling (`scripts/simulate_pr_event.py`).
+  - Automated GitHub Actions CI pipeline (`.github/workflows/ci.yml`).
+
