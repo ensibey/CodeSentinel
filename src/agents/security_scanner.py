@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Any, Dict, List
 
-from src.agents.ast_scanner import PythonASTScanner
+from src.agents.ast_scanner import ASTScanner
 from src.agents.llm import get_chat_model
 from src.agents.state import AgentState, InlineComment, SecurityVulnerability
 from src.github_client.parser import GitDiffParser
@@ -71,21 +71,27 @@ async def security_scanner_node(state: AgentState) -> Dict[str, Any]:
 
     for df in parsed_files:
         if df.file_path.endswith(".py"):
-            added_lines = [
-                (line.new_line_no or 1, line.content)
-                for hunk in df.hunks
-                for line in hunk.lines
-                if line.line_type == "add"
-            ]
-            hits = PythonASTScanner.scan_added_lines(df.file_path, added_lines)
-            for hit in hits:
-                ast_findings.append(hit)
-                logger.info(
-                    "[ast_scanner] %s in %s:%s",
-                    hit.get("category"),
-                    hit.get("file_path"),
-                    hit.get("line_number"),
-                )
+            added_lines: List[str] = []
+            line_map: Dict[int, int] = {}
+            for hunk in df.hunks:
+                for line in hunk.lines:
+                    if line.line_type == "add":
+                        added_lines.append(line.content)
+                        line_map[len(added_lines)] = line.new_line_no or 1
+
+            if added_lines:
+                snippet = "\n".join(added_lines)
+                hits = ASTScanner.scan_code(snippet, file_path=df.file_path)
+                for hit in hits:
+                    raw_line = hit.get("line_number", 1)
+                    hit["line_number"] = line_map.get(raw_line, raw_line)
+                    ast_findings.append(hit)
+                    logger.info(
+                        "[ast_scanner] %s in %s:%s",
+                        hit.get("category"),
+                        hit.get("file_path"),
+                        hit.get("line_number"),
+                    )
 
     formatted_diff = GitDiffParser.format_for_llm(parsed_files) if parsed_files else git_diff
     llm = get_chat_model(temperature=0.0)

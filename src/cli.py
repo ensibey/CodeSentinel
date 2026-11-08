@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from src.agents.ast_scanner import PythonASTScanner
+from src.agents.ast_scanner import ASTScanner
 from src.agents.graph import run_code_sentinel_workflow
 from src.agents.state import AgentState
 
@@ -54,7 +54,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     content = path.read_text(encoding="utf-8")
 
     if not args.full_graph and path.suffix.lower() == ".py":
-        findings = PythonASTScanner.scan_source(str(path.as_posix()), content)
+        findings = ASTScanner.scan_code(content, file_path=str(path.as_posix()))
         if args.json:
             print(json.dumps(findings, indent=2))
         else:
