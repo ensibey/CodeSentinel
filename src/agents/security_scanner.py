@@ -75,7 +75,7 @@ async def security_scanner_node(state: AgentState) -> Dict[str, Any]:
             line_map: Dict[int, int] = {}
             for hunk in df.hunks:
                 for line in hunk.lines:
-                    if line.line_type == "add":
+                    if line.type == "+":
                         added_lines.append(line.content)
                         line_map[len(added_lines)] = line.new_line_no or 1
 
@@ -94,7 +94,7 @@ async def security_scanner_node(state: AgentState) -> Dict[str, Any]:
                         hit_dict.get("line_number"),
                     )
 
-    formatted_diff = GitDiffParser.format_for_llm(parsed_files) if parsed_files else git_diff
+    formatted_diff = GitDiffParser.get_summary_text(parsed_files) if parsed_files else git_diff
     llm = get_chat_model(temperature=0.0)
 
     user_prompt = (
