@@ -1,154 +1,155 @@
 """
-Agent 1: Security Scanner Node.
-Performs dual-layer security auditing:
-1. Static Abstract Syntax Tree (AST) analysis for deterministic vulnerability discovery.
-2. LLM-based semantic reasoning for complex architectural and logic flaws (OWASP Top 10).
+Security Scanner Agent Node.
+Combines deterministic Python AST taint/sink analysis with LLM contextual audit
+to identify OWASP/CWE vulnerabilities and generate inline PR comments.
 """
 
 from __future__ import annotations
+
 import json
 import logging
 import re
 from typing import Any, Dict, List
 
-from src.agents.ast_scanner import ASTScanner
+from src.agents.ast_scanner import PythonASTScanner
 from src.agents.llm import get_chat_model
-from src.agents.state import AgentState, ReviewComment, SecurityVulnerability
+from src.agents.state import AgentState, InlineComment, SecurityVulnerability
 from src.github_client.parser import GitDiffParser
 
 logger = logging.getLogger("codesentinel.agents.security_scanner")
 
-SECURITY_SCANNER_SYSTEM_PROMPT = """You are an elite Senior Application Security Engineer and Principal Code Reviewer.
-Your role is to perform an exhaustive, high-precision security audit of GitHub Pull Request diffs.
+SECURITY_SCANNER_SYSTEM_PROMPT = """You are an application security engineer reviewing a GitHub Pull Request diff.
+Identify concrete security vulnerabilities in the modified code:
+1. OWASP Top 10 (SQL Injection, Command Injection, SSRF, XSS, Broken Access Control, Deserialization).
+2. CWE Top 25 (CWE-89, CWE-78, CWE-798 Hardcoded Credentials, CWE-22 Path Traversal).
+3. Algorithmic denial-of-service or resource leaks (unclosed file/socket handles, unbounded recursion).
 
-Focus Areas (OWASP Top 10 & CWE):
-- Hardcoded Secrets, API keys, credentials, JWT tokens
-- SQL Injection (raw queries, string interpolation in ORM/DB drivers)
-- Command Injection (eval, exec, os.system, unsanitized subprocess)
-- Path Traversal & Arbitrary File Access
-- Insecure Deserialization (pickle, unsafe yaml)
-- Cross-Site Scripting (XSS) & Server-Side Request Forgery (SSRF)
-
-You must output ONLY a valid JSON object matching this schema:
-{
-  "vulnerabilities": [
-    {
-      "file_path": "string",
-      "line_number": 10,
-      "category": "CWE-89: SQL Injection",
-      "severity": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
-      "description": "Clear explanation of the flaw and exploit scenario",
-      "remediation": "Actionable, production-ready remediation advice",
-      "code_snippet": "vulnerable snippet"
-    }
-  ]
-}
-If no vulnerabilities exist, return: {"vulnerabilities": []}
+Return ONLY a JSON array of findings. If none exist, return `[]`.
+[
+  {
+    "file_path": "src/auth.py",
+    "line_number": 12,
+    "category": "CWE-798: Hardcoded Credentials",
+    "severity": "CRITICAL",
+    "description": "Plaintext API secret assigned in source code.",
+    "remediation": "Read secret from environment variables via os.environ."
+  }
+]
 """
 
 
-def extract_json_from_llm_response(text: str) -> Dict[str, Any]:
-    """Helper to extract JSON dictionary from raw LLM output."""
-    # Match markdown code block ```json ... ```
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+def parse_llm_json_array(text: str) -> List[Dict[str, Any]]:
+    """Extract JSON array from raw or fenced LLM output."""
+    match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)
     if match:
         try:
             return json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
 
-    # Match first '{' to last '}'
-    brace_match = re.search(r"(\{.*\})", text, re.DOTALL)
-    if brace_match:
+    bracket_match = re.search(r"(\[.*\])", text, re.DOTALL)
+    if bracket_match:
         try:
-            return json.loads(brace_match.group(1))
+            return json.loads(bracket_match.group(1))
         except json.JSONDecodeError:
             pass
 
-    return {"vulnerabilities": []}
+    return []
 
 
 async def security_scanner_node(state: AgentState) -> Dict[str, Any]:
-    """
-    Security Scanner Agent Node.
-    Analyzes PR diff using AST and LLM reasoning.
-    """
-    repo = state.get("repo_name", "")
+    """Run hybrid AST + LLM security scan over the PR diff."""
     pr_num = state.get("pr_number", 0)
     git_diff = state.get("git_diff", "")
-    logger.info("🔍 [Security Scanner] Auditing PR %s #%d...", repo, pr_num)
+    logger.info("[security_scanner] scanning PR #%d", pr_num)
 
-    all_vulnerabilities: List[Dict[str, Any]] = []
-    seen_keys = set()
+    vulnerabilities: List[SecurityVulnerability] = []
+    review_comments: List[InlineComment] = list(state.get("review_comments", []))
 
-    # Layer 1: AST Static Analysis
-    diff_files = GitDiffParser.parse(git_diff)
-    for df in diff_files:
+    parsed_files = GitDiffParser.parse(git_diff)
+    ast_findings: List[SecurityVulnerability] = []
+
+    for df in parsed_files:
         if df.file_path.endswith(".py"):
-            # Construct snippet of added lines for AST analysis
-            added_code = "\n".join(line.content for line in df.added_lines)
-            ast_vulns = ASTScanner.scan_code(added_code, file_path=df.file_path)
-            for v in ast_vulns:
-                key = (v.file_path, v.line_number, v.category)
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    all_vulnerabilities.append(v.model_dump())
-                    logger.info("⚡ AST Hit: %s at %s:%s", v.category, v.file_path, v.line_number)
+            added_lines = [
+                (line.new_line_no or 1, line.content)
+                for hunk in df.hunks
+                for line in hunk.lines
+                if line.line_type == "add"
+            ]
+            hits = PythonASTScanner.scan_added_lines(df.file_path, added_lines)
+            for hit in hits:
+                ast_findings.append(hit)
+                logger.info(
+                    "[ast_scanner] %s in %s:%s",
+                    hit.get("category"),
+                    hit.get("file_path"),
+                    hit.get("line_number"),
+                )
 
-    # Layer 2: LLM Semantic Analysis
+    formatted_diff = GitDiffParser.format_for_llm(parsed_files) if parsed_files else git_diff
     llm = get_chat_model(temperature=0.0)
-    user_prompt = f"Repository: {repo}\nPR Number: #{pr_num}\n\nGit Diff:\n{git_diff}\n\nPlease audit for security vulnerabilities."
 
+    user_prompt = (
+        f"Pull Request #{pr_num}: {state.get('pr_title', '')}\n\n"
+        f"Unified Diff with Line Numbers:\n{formatted_diff}\n\n"
+        "Identify all security vulnerabilities and output the JSON array."
+    )
+
+    llm_findings: List[Dict[str, Any]] = []
     try:
         messages = [
             {"role": "system", "content": SECURITY_SCANNER_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
         response = await llm.ainvoke(messages)
-        parsed = extract_json_from_llm_response(response.content)
-
-        for item in parsed.get("vulnerabilities", []):
-            try:
-                v = SecurityVulnerability(**item)
-                key = (v.file_path, v.line_number, v.category)
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    all_vulnerabilities.append(v.model_dump())
-                    logger.info("🧠 LLM Hit: %s at %s:%s", v.category, v.file_path, v.line_number)
-            except Exception as parse_err:
-                logger.warning("Error parsing vulnerability item: %s", parse_err)
+        llm_findings = parse_llm_json_array(response.content)
     except Exception as exc:
-        logger.error("LLM audit failed (%s). Continuing with AST findings.", exc)
+        logger.error("[security_scanner] LLM scan failed (%s), using AST findings only", exc)
 
-    # Layer 3: Convert vulnerabilities to inline review comments
-    review_comments: List[Dict[str, Any]] = []
-    for vuln in all_vulnerabilities:
-        line_no = vuln.get("line_number") or 1
-        path = vuln.get("file_path", "")
-        body = (
-            f"### 🛡️ CodeSentinel Security Alert: `{vuln.get('category')}`\n"
-            f"**Severity:** `{vuln.get('severity')}`\n\n"
-            f"**Finding:** {vuln.get('description')}\n\n"
-            f"> [!WARNING]\n"
-            f"> **Remediation Recommendation:**\n"
-            f"> {vuln.get('remediation')}\n"
+    seen_keys = set()
+    for v in ast_findings:
+        key = (v.get("file_path"), v.get("line_number"), v.get("category", "")[:7])
+        seen_keys.add(key)
+        vulnerabilities.append(v)
+
+    for item in llm_findings:
+        vuln: SecurityVulnerability = {
+            "file_path": item.get("file_path", "unknown"),
+            "line_number": int(item.get("line_number", 1)),
+            "category": item.get("category", "Security Vulnerability"),
+            "severity": item.get("severity", "HIGH"),
+            "description": item.get("description", ""),
+            "remediation": item.get("remediation", ""),
+        }
+        key = (vuln["file_path"], vuln["line_number"], vuln["category"][:7])
+        if key not in seen_keys:
+            seen_keys.add(key)
+            vulnerabilities.append(vuln)
+
+    for vuln in vulnerabilities:
+        comment_body = (
+            f"### CodeSentinel Security Alert: {vuln['category']}\n"
+            f"**Severity:** `{vuln['severity']}`\n\n"
+            f"**Finding:** {vuln['description']}\n\n"
+            f"**Remediation:** {vuln['remediation']}"
         )
         review_comments.append(
-            ReviewComment(
-                path=path,
-                line=line_no,
-                body=body,
-                side="RIGHT",
-            ).model_dump()
+            {
+                "path": vuln["file_path"],
+                "line": vuln["line_number"],
+                "body": comment_body,
+                "side": "RIGHT",
+            }
         )
 
     logger.info(
-        "✅ [Security Scanner] Completed: %d vulnerabilities detected on PR #%d",
-        len(all_vulnerabilities),
+        "[security_scanner] completed for PR #%d: %d finding(s)",
         pr_num,
+        len(vulnerabilities),
     )
 
     return {
-        "security_vulnerabilities": all_vulnerabilities,
+        "security_vulnerabilities": vulnerabilities,
         "review_comments": review_comments,
     }
