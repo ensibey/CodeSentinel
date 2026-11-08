@@ -2,7 +2,7 @@
 > **Autonomous Multi-Agent GitHub Pull Request & Security Review System**  
 > *Built with LangGraph, FastAPI, Redis ARQ, Docker, and PyGitHub.*
 
-[![CodeSentinel CI](https://github.com/your-username/codesentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/codesentinel/actions)
+[![CodeSentinel CI](https://github.com/ensibey/CodeSentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/ensibey/CodeSentinel/actions)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green.svg)](https://fastapi.tiangolo.com)
 [![Redis](https://img.shields.io/badge/Redis-ARQ-red.svg)](https://redis.io)
@@ -109,8 +109,8 @@ codesentinel/
 ### 1. Clone & Set Up Virtual Environment
 
 ```bash
-git clone https://github.com/your-username/codesentinel.git
-cd codesentinel
+git clone https://github.com/ensibey/CodeSentinel.git
+cd CodeSentinel
 
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
