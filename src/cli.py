@@ -54,7 +54,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     content = path.read_text(encoding="utf-8")
 
     if not args.full_graph and path.suffix.lower() == ".py":
-        findings = ASTScanner.scan_code(content, file_path=str(path.as_posix()))
+        raw_findings = ASTScanner.scan_code(content, file_path=str(path.as_posix()))
+        findings = [f.model_dump() for f in raw_findings]
         if args.json:
             print(json.dumps(findings, indent=2))
         else:
@@ -81,6 +82,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "judge_feedback": "",
         "review_comments": [],
         "iteration_count": 0,
+        "review_summary_markdown": None,
     }
 
     final_state = asyncio.run(run_code_sentinel_workflow(initial_state))

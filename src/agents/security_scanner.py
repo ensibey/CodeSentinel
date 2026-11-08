@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 
 from src.agents.ast_scanner import ASTScanner
 from src.agents.llm import get_chat_model
-from src.agents.state import AgentState, InlineComment, SecurityVulnerability
+from src.agents.state import AgentState, ReviewComment, SecurityVulnerability
 from src.github_client.parser import GitDiffParser
 
 logger = logging.getLogger("codesentinel.agents.security_scanner")
@@ -63,11 +63,11 @@ async def security_scanner_node(state: AgentState) -> Dict[str, Any]:
     git_diff = state.get("git_diff", "")
     logger.info("[security_scanner] scanning PR #%d", pr_num)
 
-    vulnerabilities: List[SecurityVulnerability] = []
-    review_comments: List[InlineComment] = list(state.get("review_comments", []))
+    vulnerabilities: List[Dict[str, Any]] = []
+    review_comments: List[Dict[str, Any]] = list(state.get("review_comments", []))
 
     parsed_files = GitDiffParser.parse(git_diff)
-    ast_findings: List[SecurityVulnerability] = []
+    ast_findings: List[Dict[str, Any]] = []
 
     for df in parsed_files:
         if df.file_path.endswith(".py"):
@@ -83,14 +83,15 @@ async def security_scanner_node(state: AgentState) -> Dict[str, Any]:
                 snippet = "\n".join(added_lines)
                 hits = ASTScanner.scan_code(snippet, file_path=df.file_path)
                 for hit in hits:
-                    raw_line = hit.get("line_number", 1)
-                    hit["line_number"] = line_map.get(raw_line, raw_line)
-                    ast_findings.append(hit)
+                    hit_dict = hit.model_dump() if isinstance(hit, SecurityVulnerability) else dict(hit)
+                    raw_line = hit_dict.get("line_number") or 1
+                    hit_dict["line_number"] = line_map.get(raw_line, raw_line)
+                    ast_findings.append(hit_dict)
                     logger.info(
                         "[ast_scanner] %s in %s:%s",
-                        hit.get("category"),
-                        hit.get("file_path"),
-                        hit.get("line_number"),
+                        hit_dict.get("category"),
+                        hit_dict.get("file_path"),
+                        hit_dict.get("line_number"),
                     )
 
     formatted_diff = GitDiffParser.format_for_llm(parsed_files) if parsed_files else git_diff
@@ -120,7 +121,7 @@ async def security_scanner_node(state: AgentState) -> Dict[str, Any]:
         vulnerabilities.append(v)
 
     for item in llm_findings:
-        vuln: SecurityVulnerability = {
+        vuln_dict: Dict[str, Any] = {
             "file_path": item.get("file_path", "unknown"),
             "line_number": int(item.get("line_number", 1)),
             "category": item.get("category", "Security Vulnerability"),
@@ -128,10 +129,10 @@ async def security_scanner_node(state: AgentState) -> Dict[str, Any]:
             "description": item.get("description", ""),
             "remediation": item.get("remediation", ""),
         }
-        key = (vuln["file_path"], vuln["line_number"], vuln["category"][:7])
+        key = (vuln_dict["file_path"], vuln_dict["line_number"], vuln_dict["category"][:7])
         if key not in seen_keys:
             seen_keys.add(key)
-            vulnerabilities.append(vuln)
+            vulnerabilities.append(vuln_dict)
 
     for vuln in vulnerabilities:
         comment_body = (
@@ -140,14 +141,13 @@ async def security_scanner_node(state: AgentState) -> Dict[str, Any]:
             f"**Finding:** {vuln['description']}\n\n"
             f"**Remediation:** {vuln['remediation']}"
         )
-        review_comments.append(
-            {
-                "path": vuln["file_path"],
-                "line": vuln["line_number"],
-                "body": comment_body,
-                "side": "RIGHT",
-            }
+        comment = ReviewComment(
+            path=vuln["file_path"],
+            line=int(vuln.get("line_number") or 1),
+            body=comment_body,
+            side="RIGHT",
         )
+        review_comments.append(comment.model_dump())
 
     logger.info(
         "[security_scanner] completed for PR #%d: %d finding(s)",
