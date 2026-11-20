@@ -128,3 +128,17 @@ def test_detects_provider_secrets_and_high_entropy():
     assert any("High-Entropy" in v.category for v in vulns)
 
 
+def test_detects_unsafe_yaml_and_allows_safe_loader():
+    code = """
+    import yaml
+    a = yaml.load(raw_data, Loader=yaml.Loader)
+    b = yaml.unsafe_load(raw_data)
+    c = yaml.load(raw_data, Loader=yaml.SafeLoader)
+    d = yaml.safe_load(raw_data)
+    """
+    vulns = ASTScanner.scan_code(code, "yaml_check.py")
+    assert len(vulns) == 2
+    assert all("CWE-502" in v.category for v in vulns)
+
+
+

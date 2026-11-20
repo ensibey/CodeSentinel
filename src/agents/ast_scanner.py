@@ -225,24 +225,50 @@ class SecurityASTVisitor(ast.NodeVisitor):
                 )
             )
 
-        # 2. Insecure Deserialization: pickle.loads()
-        if func_name in ("loads", "load"):
-            is_pickle = False
+        # 2. Insecure Deserialization: pickle.loads() and unsafe yaml.load()
+        if func_name in ("loads", "load", "unsafe_load"):
             if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-                if node.func.value.id in ("pickle", "_pickle", "cPickle"):
-                    is_pickle = True
-            if is_pickle:
-                self.vulnerabilities.append(
-                    SecurityVulnerability(
-                        file_path=self.file_path,
-                        line_number=node.lineno,
-                        category="CWE-502: Deserialization of Untrusted Data",
-                        severity="CRITICAL",
-                        description="pickle deserialization allows arbitrary code execution via forged pickle payloads.",
-                        remediation="Replace pickle with safe serialization formats like JSON, Protobuf, or MsgPack.",
-                        code_snippet="pickle.loads(...)",
+                module_name = node.func.value.id
+                if module_name in ("pickle", "_pickle", "cPickle") and func_name in ("loads", "load"):
+                    self.vulnerabilities.append(
+                        SecurityVulnerability(
+                            file_path=self.file_path,
+                            line_number=node.lineno,
+                            category="CWE-502: Deserialization of Untrusted Data",
+                            severity="CRITICAL",
+                            description="pickle deserialization allows arbitrary code execution via forged pickle payloads.",
+                            remediation="Replace pickle with safe serialization formats like JSON, Protobuf, or MsgPack.",
+                            code_snippet=f"pickle.{func_name}(...)",
+                        )
                     )
-                )
+                elif module_name == "yaml":
+                    safe_loaders = {"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader"}
+                    loader_is_safe = False
+                    if func_name == "load":
+                        for kw in node.keywords:
+                            if kw.arg == "Loader":
+                                loader_name = (
+                                    kw.value.attr
+                                    if isinstance(kw.value, ast.Attribute)
+                                    else (kw.value.id if isinstance(kw.value, ast.Name) else "")
+                                )
+                                if loader_name in safe_loaders:
+                                    loader_is_safe = True
+                    if func_name == "unsafe_load" or (func_name == "load" and not loader_is_safe):
+                        self.vulnerabilities.append(
+                            SecurityVulnerability(
+                                file_path=self.file_path,
+                                line_number=node.lineno,
+                                category="CWE-502: Unsafe YAML Deserialization",
+                                severity="CRITICAL",
+                                description=(
+                                    f"Calling yaml.{func_name}() without SafeLoader can instantiate arbitrary Python objects "
+                                    "and lead to Remote Code Execution."
+                                ),
+                                remediation="Use yaml.safe_load(data) or pass Loader=yaml.SafeLoader explicitly.",
+                                code_snippet=f"yaml.{func_name}(...)",
+                            )
+                        )
 
         # 3. Command Injection: subprocess with shell=True or os.system
         if func_name == "system" and isinstance(node.func, ast.Attribute):
