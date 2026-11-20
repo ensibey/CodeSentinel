@@ -435,6 +435,38 @@ class SecurityASTVisitor(ast.NodeVisitor):
                     )
                 )
 
+        # 7. Server-Side Request Forgery (SSRF) in HTTP clients (CWE-918)
+        http_clients = {"requests", "httpx"}
+        http_methods = {"get", "post", "put", "delete", "patch", "head", "request"}
+        is_http_call = False
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            if node.func.value.id in http_clients and func_name in http_methods:
+                is_http_call = True
+        if func_name == "urlopen":
+            is_http_call = True
+
+        if is_http_call and node.args:
+            url_arg = node.args[0]
+            if isinstance(url_arg, (ast.JoinedStr, ast.BinOp)) or (
+                isinstance(url_arg, ast.Call)
+                and isinstance(url_arg.func, ast.Attribute)
+                and url_arg.func.attr == "format"
+            ):
+                self.vulnerabilities.append(
+                    SecurityVulnerability(
+                        file_path=self.file_path,
+                        line_number=node.lineno,
+                        category="CWE-918: Server-Side Request Forgery (SSRF)",
+                        severity="HIGH",
+                        description=(
+                            f"Dynamic URL constructed via string formatting/concatenation in '{func_name}()'. "
+                            "Unvalidated user-controlled URLs can reach internal metadata endpoints (e.g., 169.254.169.254)."
+                        ),
+                        remediation="Validate URL schemes (https only) and enforce an explicit allowlist of permitted hostnames/IP ranges.",
+                        code_snippet=f"{func_name}(<dynamic_url>)",
+                    )
+                )
+
         self.generic_visit(node)
 
 

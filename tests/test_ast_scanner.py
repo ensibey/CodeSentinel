@@ -167,6 +167,20 @@ def test_detects_disabled_tls_verification():
     assert all("CWE-295" in v.category for v in vulns)
 
 
+def test_detects_ssrf_dynamic_url_and_ignores_static():
+    code = """
+    import requests
+    from urllib.request import urlopen
+    requests.get(f"http://{user_host}/admin")
+    urlopen("https://" + target_domain + "/hook")
+    requests.get("https://api.github.com/zen")
+    """
+    vulns = ASTScanner.scan_code(code, "ssrf.py")
+    assert len(vulns) == 2
+    assert all("CWE-918" in v.category for v in vulns)
+
+
+
 
 
 
