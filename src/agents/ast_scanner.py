@@ -10,8 +10,9 @@ Performs deterministic static analysis on Python code to identify:
 
 from __future__ import annotations
 import ast
+import math
 import re
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from src.agents.state import SecurityVulnerability
 from src.rules_config import ScanConfig
@@ -60,30 +61,74 @@ class SecurityASTVisitor(ast.NodeVisitor):
         r"(api[_-]?key|secret|token|password|auth[_-]?key|jwt[_-]?secret|private[_-]?key|aws[_-]?key)",
         re.IGNORECASE,
     )
+    PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern]] = [
+        ("AWS Access Key ID", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+        ("GitHub Personal Access Token", re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b")),
+        ("OpenAI API Key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{24,}\b")),
+        ("Stripe Live Secret Key", re.compile(r"\bsk_live_[0-9a-zA-Z]{20,}\b")),
+        ("Slack Token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b")),
+        ("Private Key Material", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
+    ]
     SQL_KEYWORDS_PATTERN = re.compile(
         r"(SELECT\s+.*FROM|INSERT\s+INTO|UPDATE\s+.*SET|DELETE\s+FROM|DROP\s+TABLE)",
         re.IGNORECASE,
     )
+
+    @staticmethod
+    def _shannon_entropy(text: str) -> float:
+        if not text:
+            return 0.0
+        counts: Dict[str, int] = {}
+        for ch in text:
+            counts[ch] = counts.get(ch, 0) + 1
+        length = len(text)
+        return -sum((c / length) * math.log2(c / length) for c in counts.values())
+
+    def _detect_provider_secret(self, value: str) -> Optional[str]:
+        for label, pattern in self.PROVIDER_SECRET_PATTERNS:
+            if pattern.search(value):
+                return label
+        return None
 
     def __init__(self, file_path: str = "unknown.py"):
         self.file_path = file_path
         self.vulnerabilities: List[SecurityVulnerability] = []
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        """Detect hardcoded credentials in assignments."""
-        for target in node.targets:
-            var_name = ""
-            if isinstance(target, ast.Name):
-                var_name = target.id
-            elif isinstance(target, ast.Attribute):
-                var_name = target.attr
+        """Detect hardcoded credentials via variable names, provider token patterns, and Shannon entropy."""
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            val = node.value.value.strip()
+            placeholders = {"", "dummy", "placeholder", "xxx", "change_me", "test", "your_secret_here"}
+            provider_hit = self._detect_provider_secret(val)
 
-            if var_name and self.SECRET_VAR_PATTERN.search(var_name):
-                # Check if assigned value is a non-empty string literal
-                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                    val = node.value.value.strip()
-                    # Skip common placeholder strings
-                    placeholders = {"", "dummy", "placeholder", "xxx", "change_me", "test", "your_secret_here"}
+            for target in node.targets:
+                var_name = ""
+                if isinstance(target, ast.Name):
+                    var_name = target.id
+                elif isinstance(target, ast.Attribute):
+                    var_name = target.attr
+
+                if provider_hit:
+                    self.vulnerabilities.append(
+                        SecurityVulnerability(
+                            file_path=self.file_path,
+                            line_number=node.lineno,
+                            category="CWE-798: Hardcoded Credentials",
+                            severity="CRITICAL",
+                            description=(
+                                f"Detected hardcoded {provider_hit} assigned to '{var_name or 'literal'}'. "
+                                "Committing live provider credentials exposes cloud and API accounts immediately."
+                            ),
+                            remediation=(
+                                "Revoke the exposed credential immediately and load it from environment variables "
+                                "or a dedicated secret manager (AWS Secrets Manager, HashiCorp Vault, Doppler)."
+                            ),
+                            code_snippet=f"{var_name or 'secret'} = '***'",
+                        )
+                    )
+                    break
+
+                if var_name and self.SECRET_VAR_PATTERN.search(var_name):
                     if len(val) >= 8 and val.lower() not in placeholders and not val.startswith("env:"):
                         self.vulnerabilities.append(
                             SecurityVulnerability(
@@ -102,6 +147,27 @@ class SecurityASTVisitor(ast.NodeVisitor):
                                 code_snippet=f"{var_name} = '***'",
                             )
                         )
+                elif (
+                    len(val) >= 24
+                    and " " not in val
+                    and "/" not in val
+                    and not val.startswith(("http://", "https://"))
+                    and self._shannon_entropy(val) >= 4.4
+                ):
+                    self.vulnerabilities.append(
+                        SecurityVulnerability(
+                            file_path=self.file_path,
+                            line_number=node.lineno,
+                            category="CWE-798: High-Entropy Hardcoded Secret",
+                            severity="HIGH",
+                            description=(
+                                f"High-entropy string (Shannon H={self._shannon_entropy(val):.2f}) assigned to '{var_name}'. "
+                                "This strongly resembles an API token, signing key, or credential."
+                            ),
+                            remediation="Move secrets out of source code into environment variables or a secret vault.",
+                            code_snippet=f"{var_name} = '<high-entropy-secret>'",
+                        )
+                    )
         self.generic_visit(node)
 
     def visit_Compare(self, node: ast.Compare) -> None:

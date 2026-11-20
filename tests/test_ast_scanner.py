@@ -115,3 +115,16 @@ def test_scan_code_respects_scan_config():
     assert len(vulns) == 1
     assert "CWE-78" in vulns[0].category
 
+
+def test_detects_provider_secrets_and_high_entropy():
+    code = """
+    cloud_id = "AKIAIOSFODNN7EXAMPLE"
+    random_blob = "aB9kL2mN5pQ8rS1tU4vW7xY0zC3dE6fG"
+    normal_url = "https://api.example.com/v1/items/list"
+    """
+    vulns = ASTScanner.scan_code(code, "secrets.py")
+    assert len(vulns) == 2
+    assert any("AWS Access Key" in v.description for v in vulns)
+    assert any("High-Entropy" in v.category for v in vulns)
+
+
