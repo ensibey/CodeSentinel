@@ -42,3 +42,22 @@ def test_cli_fail_on_severity_policy(tmp_path: Path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["findings"] == []
 
+
+def test_cli_sarif_and_markdown_formats(tmp_path: Path, capsys):
+    target = tmp_path / "bad.py"
+    target.write_text("eval(data)\n", encoding="utf-8")
+
+    sarif_out = tmp_path / "out.sarif"
+    rc = main([str(target), "--format", "sarif", "--output", str(sarif_out)])
+    assert rc == 1
+    sarif_data = json.loads(sarif_out.read_text(encoding="utf-8"))
+    assert sarif_data["version"] == "2.1.0"
+    assert len(sarif_data["runs"][0]["results"]) == 1
+
+    rc_md = main([str(target), "--format", "markdown"])
+    assert rc_md == 1
+    md_text = capsys.readouterr().out
+    assert "## CodeSentinel Security Audit Report" in md_text
+    assert "`CS003`" in md_text
+
+

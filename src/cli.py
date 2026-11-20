@@ -13,12 +13,14 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from src.agents.ast_scanner import ASTScanner
 from src.agents.graph import run_code_sentinel_workflow
 from src.agents.state import AgentState, SecurityVulnerability
+from src.reporting import export_sarif, format_markdown_report, format_text_report
 from src.rules_config import SEVERITY_ORDER, ScanConfig
 
 
@@ -73,7 +75,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="Run the full LangGraph pipeline (Scanner -> Test Gen -> Patch Creator -> Judge)",
     )
-    parser.add_argument("--json", action="store_true", help="Emit findings as JSON")
+    parser.add_argument("--json", action="store_true", help="Emit findings as JSON (shorthand for --format json)")
+    parser.add_argument(
+        "--format",
+        choices=["text", "json", "sarif", "markdown"],
+        default="text",
+        help="Output format for static scan reports (default: text)",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional file path to write the rendered report (e.g., results.sarif)",
+    )
     parser.add_argument(
         "--min-severity",
         choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"],
@@ -87,6 +100,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Exit with code 1 if any finding meets or exceeds this severity (default: LOW)",
     )
     args = parser.parse_args(argv)
+    output_format = "json" if args.json else args.format
 
     path = Path(args.target)
     if not path.exists():
@@ -104,18 +118,30 @@ def main(argv: Optional[List[str]] = None) -> int:
         return any(SEVERITY_ORDER.get(str(i.get("severity", "LOW")).upper(), 1) >= threshold for i in items)
 
     if not args.full_graph and (path.is_dir() or path.suffix.lower() == ".py"):
+        t0 = time.perf_counter()
         raw_findings, files_scanned = scan_target_static(path, config)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
         findings = [f.model_dump() for f in raw_findings]
-        if args.json:
-            print(json.dumps({"files_scanned": files_scanned, "findings": findings}, indent=2))
+
+        if output_format == "json":
+            rendered = json.dumps(
+                {"files_scanned": files_scanned, "elapsed_ms": round(elapsed_ms, 2), "findings": findings},
+                indent=2,
+            )
+        elif output_format == "sarif":
+            rendered = json.dumps(export_sarif(raw_findings), indent=2)
+        elif output_format == "markdown":
+            rendered = format_markdown_report(raw_findings, files_scanned, elapsed_ms)
         else:
-            if not findings:
-                print(f"{path}: clean ({files_scanned} file(s) scanned, 0 vulnerabilities detected)")
-            else:
-                for f in findings:
-                    print(
-                        f"{f['file_path']}:{f['line_number']}: [{f['severity']}] {f['category']} - {f['description']}"
-                    )
+            rendered = format_text_report(raw_findings, files_scanned, elapsed_ms)
+
+        if args.output:
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(rendered, encoding="utf-8")
+        else:
+            print(rendered)
+
         return 1 if _should_fail(findings) else 0
 
     if path.is_dir():
