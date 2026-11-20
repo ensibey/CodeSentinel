@@ -155,5 +155,18 @@ def test_detects_weak_crypto_and_insecure_random():
     assert any("CWE-330" in v.category for v in vulns)
 
 
+def test_detects_disabled_tls_verification():
+    code = """
+    import requests
+    import ssl
+    requests.get("https://internal.corp/api", verify=False)
+    ctx = ssl._create_unverified_context()
+    """
+    vulns = ASTScanner.scan_code(code, "tls.py")
+    assert len(vulns) == 2
+    assert all("CWE-295" in v.category for v in vulns)
+
+
+
 
 

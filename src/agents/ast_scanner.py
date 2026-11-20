@@ -404,6 +404,37 @@ class SecurityASTVisitor(ast.NodeVisitor):
                             )
                         )
 
+        # 6. Disabled TLS/SSL Certificate Verification (CWE-295)
+        if func_name == "_create_unverified_context":
+            self.vulnerabilities.append(
+                SecurityVulnerability(
+                    file_path=self.file_path,
+                    line_number=node.lineno,
+                    category="CWE-295: Improper Certificate Validation",
+                    severity="HIGH",
+                    description="Using ssl._create_unverified_context() disables TLS certificate validation, exposing traffic to MITM attacks.",
+                    remediation="Use ssl.create_default_context() with valid CA certificates.",
+                    code_snippet="ssl._create_unverified_context()",
+                )
+            )
+
+        for kw in node.keywords:
+            if kw.arg == "verify" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
+                self.vulnerabilities.append(
+                    SecurityVulnerability(
+                        file_path=self.file_path,
+                        line_number=node.lineno,
+                        category="CWE-295: Improper Certificate Validation",
+                        severity="HIGH",
+                        description=(
+                            f"TLS certificate verification disabled via verify=False in '{func_name}()'. "
+                            "Allows Man-in-the-Middle (MITM) interception."
+                        ),
+                        remediation="Remove verify=False or point verify= to a trusted CA bundle.",
+                        code_snippet=f"{func_name}(..., verify=False)",
+                    )
+                )
+
         self.generic_visit(node)
 
 
