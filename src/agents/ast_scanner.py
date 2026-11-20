@@ -168,6 +168,29 @@ class SecurityASTVisitor(ast.NodeVisitor):
                             code_snippet=f"{var_name} = '<high-entropy-secret>'",
                         )
                     )
+        elif isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute):
+            if isinstance(node.value.func.value, ast.Name) and node.value.func.value.id == "random":
+                for target in node.targets:
+                    var_name = (
+                        target.id
+                        if isinstance(target, ast.Name)
+                        else (target.attr if isinstance(target, ast.Attribute) else "")
+                    )
+                    if var_name and re.search(r"(token|secret|password|nonce|otp|session|key|salt)", var_name, re.IGNORECASE):
+                        self.vulnerabilities.append(
+                            SecurityVulnerability(
+                                file_path=self.file_path,
+                                line_number=node.lineno,
+                                category="CWE-330: Use of Insufficiently Random Values",
+                                severity="HIGH",
+                                description=(
+                                    f"Non-cryptographic 'random.{node.value.func.attr}()' used to generate security value '{var_name}'. "
+                                    "Mersenne Twister output is predictable."
+                                ),
+                                remediation="Use Python's 'secrets' module (e.g., secrets.token_urlsafe(), secrets.choice()).",
+                                code_snippet=f"{var_name} = random.{node.value.func.attr}(...)",
+                            )
+                        )
         self.generic_visit(node)
 
     def visit_Compare(self, node: ast.Compare) -> None:
@@ -340,6 +363,46 @@ class SecurityASTVisitor(ast.NodeVisitor):
                         code_snippet=f"{func_name}(<dynamic_query>)",
                     )
                 )
+
+        # 5. Weak Cryptography: hashlib.md5 / hashlib.sha1
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            if node.func.value.id == "hashlib":
+                weak_alg: Optional[str] = None
+                if func_name in ("md5", "sha1"):
+                    weak_alg = func_name
+                elif (
+                    func_name == "new"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                    and node.args[0].value.lower() in ("md5", "sha1")
+                ):
+                    weak_alg = node.args[0].value.lower()
+
+                if weak_alg:
+                    non_security = any(
+                        kw.arg == "usedforsecurity"
+                        and isinstance(kw.value, ast.Constant)
+                        and kw.value.value is False
+                        for kw in node.keywords
+                    )
+                    if not non_security:
+                        self.vulnerabilities.append(
+                            SecurityVulnerability(
+                                file_path=self.file_path,
+                                line_number=node.lineno,
+                                category="CWE-327: Use of a Broken or Risky Cryptographic Algorithm",
+                                severity="MEDIUM",
+                                description=(
+                                    f"Weak hash algorithm 'hashlib.{weak_alg}()' is vulnerable to collision attacks."
+                                ),
+                                remediation=(
+                                    "Use SHA-256/SHA-3 (hashlib.sha256) for integrity checks, Argon2/bcrypt for passwords, "
+                                    "or pass usedforsecurity=False for non-security checksums."
+                                ),
+                                code_snippet=f"hashlib.{weak_alg}(...)",
+                            )
+                        )
 
         self.generic_visit(node)
 

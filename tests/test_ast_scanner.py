@@ -141,4 +141,19 @@ def test_detects_unsafe_yaml_and_allows_safe_loader():
     assert all("CWE-502" in v.category for v in vulns)
 
 
+def test_detects_weak_crypto_and_insecure_random():
+    code = """
+    import hashlib
+    import random
+    digest = hashlib.md5(b"password").hexdigest()
+    checksum = hashlib.md5(b"file", usedforsecurity=False).hexdigest()
+    session_token = random.randint(100000, 999999)
+    """
+    vulns = ASTScanner.scan_code(code, "crypto.py")
+    assert len(vulns) == 2
+    assert any("CWE-327" in v.category for v in vulns)
+    assert any("CWE-330" in v.category for v in vulns)
+
+
+
 
