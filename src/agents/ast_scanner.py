@@ -94,6 +94,53 @@ class SecurityASTVisitor(ast.NodeVisitor):
         self.file_path = file_path
         self.vulnerabilities: List[SecurityVulnerability] = []
 
+    UNSAFE_XML_MODULES = {
+        "xml.etree.ElementTree",
+        "xml.etree.cElementTree",
+        "xml.dom.minidom",
+        "xml.dom.pulldom",
+        "xml.sax",
+        "xml.parsers.expat",
+    }
+
+    def visit_Import(self, node: ast.Import) -> None:
+        """Detect unsafe stdlib XML parsers vulnerable to XXE (CWE-611)."""
+        for alias in node.names:
+            if alias.name in self.UNSAFE_XML_MODULES:
+                self.vulnerabilities.append(
+                    SecurityVulnerability(
+                        file_path=self.file_path,
+                        line_number=node.lineno,
+                        category="CWE-611: Improper Restriction of XML External Entity Reference (XXE)",
+                        severity="MEDIUM",
+                        description=(
+                            f"Standard library XML module '{alias.name}' is vulnerable to XML bomb / XXE attacks on untrusted input."
+                        ),
+                        remediation="Use 'defusedxml' (e.g., defusedxml.ElementTree) when parsing untrusted XML.",
+                        code_snippet=f"import {alias.name}",
+                    )
+                )
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Detect unsafe stdlib XML imports via from ... import ... (CWE-611)."""
+        mod = node.module or ""
+        if mod in self.UNSAFE_XML_MODULES or any(f"{mod}.{a.name}" in self.UNSAFE_XML_MODULES for a in node.names):
+            self.vulnerabilities.append(
+                SecurityVulnerability(
+                    file_path=self.file_path,
+                    line_number=node.lineno,
+                    category="CWE-611: Improper Restriction of XML External Entity Reference (XXE)",
+                    severity="MEDIUM",
+                    description=(
+                        f"Importing unsafe stdlib XML parser from '{mod}' exposes XML parsing to entity expansion / XXE."
+                    ),
+                    remediation="Replace stdlib xml parsers with 'defusedxml' equivalents.",
+                    code_snippet=f"from {mod} import ...",
+                )
+            )
+        self.generic_visit(node)
+
     def visit_Assign(self, node: ast.Assign) -> None:
         """Detect hardcoded credentials via variable names, provider token patterns, and Shannon entropy."""
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):

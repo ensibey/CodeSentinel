@@ -191,6 +191,18 @@ def test_detects_path_traversal_in_open():
     assert all("CWE-22" in v.category for v in vulns)
 
 
+def test_detects_unsafe_xml_imports_and_allows_defusedxml():
+    code = """
+    import xml.etree.ElementTree as ET
+    from xml.dom import minidom
+    import defusedxml.ElementTree as SafeET
+    """
+    vulns = ASTScanner.scan_code(code, "xml_parser.py")
+    assert len(vulns) == 2
+    assert all("CWE-611" in v.category for v in vulns)
+
+
+
 
 
 
