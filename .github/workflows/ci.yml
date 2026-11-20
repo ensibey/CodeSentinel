@@ -42,3 +42,12 @@ jobs:
         GITHUB_WEBHOOK_SECRET: test_ci_secret_key
       run: |
         pytest -v --durations=10
+
+    - name: Run OWASP/CWE AST Benchmark
+      run: |
+        python benchmarks/run_benchmark.py
+
+    - name: Self-scan CodeSentinel source (SARIF + HIGH policy)
+      run: |
+        python -m src.cli src/ --fail-on HIGH
+        python -m src.cli examples/secure_api.py --fail-on LOW
