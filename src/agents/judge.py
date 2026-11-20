@@ -11,8 +11,29 @@ import logging
 import re
 from typing import Any, Dict
 
+from src.agents.ast_scanner import ASTScanner
 from src.agents.llm import get_chat_model
+from src.agents.rule_registry import resolve_rule_for_category
 from src.agents.state import AgentState
+
+
+def verify_patch_ast_safety(patch_diff: str) -> list[str]:
+    """
+    Deterministically scan newly added lines in a proposed unified diff patch.
+    Returns a list of residual CWE categories if the patch still introduces AST vulnerabilities.
+    """
+    if not patch_diff or not patch_diff.strip():
+        return []
+    added_lines = [
+        line[1:]
+        for line in patch_diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+    if not added_lines:
+        return []
+    candidate_code = "\n".join(added_lines)
+    residual = ASTScanner.scan_code(candidate_code, file_path="proposed_patch.py")
+    return [v.category for v in residual]
 
 logger = logging.getLogger("codesentinel.agents.judge")
 
@@ -75,6 +96,14 @@ def generate_pr_summary_markdown(state: AgentState, safety_score: int, approved:
         else "**ACTION REQUIRED**"
     )
 
+    owasp_categories = sorted(
+        {
+            rule.owasp_2021
+            for v in vulns
+            if (rule := resolve_rule_for_category(str(v.get("category", "")))) is not None
+        }
+    )
+
     report = [
         "## CodeSentinel Security Audit",
         f"**Audit Status:** {status_label} | **Security Rating:** `{safety_score}/100` | **Agent Cycles:** `{iteration}`\n",
@@ -90,6 +119,9 @@ def generate_pr_summary_markdown(state: AgentState, safety_score: int, approved:
         f"- **Synthesized Pytest Suites:** `{len(tests)}` test block(s) generated.",
         f"- **Proposed Patch Status:** `{'Available below' if patch else 'No patch needed'}`.",
     ]
+
+    if owasp_categories:
+        report.append(f"- **OWASP 2021 Mapping:** {', '.join(f'`{c}`' for c in owasp_categories)}")
 
     if patch:
         report.extend(
@@ -123,6 +155,18 @@ async def judge_node(state: AgentState) -> Dict[str, Any]:
         return {
             "judge_approval": True,
             "judge_feedback": "Code clean. No security risks identified.",
+            "iteration_count": iteration,
+            "review_summary_markdown": summary,
+        }
+
+    # Deterministic AST gate on the proposed patch before calling LLM
+    residual_cwes = verify_patch_ast_safety(patch)
+    if residual_cwes and iteration < 3:
+        logger.warning("[judge] proposed patch still contains AST vulnerabilities: %s", residual_cwes)
+        summary = generate_pr_summary_markdown(state, safety_score=30, approved=False)
+        return {
+            "judge_approval": False,
+            "judge_feedback": f"Rejected by deterministic AST check: proposed patch still contains {', '.join(residual_cwes)}.",
             "iteration_count": iteration,
             "review_summary_markdown": summary,
         }

@@ -105,3 +105,22 @@ def test_should_continue_review_logic():
         "iteration_count": 3,
     }  # type: ignore
     assert should_continue_review(state_max) == END
+
+
+@pytest.mark.asyncio
+async def test_judge_rejects_patch_with_residual_ast_vulnerability(base_state: AgentState):
+    """Judge should deterministically reject a proposed patch that still introduces AST vulnerabilities."""
+    base_state["security_vulnerabilities"] = [
+        {"category": "CWE-95: Dynamic Code Execution", "severity": "CRITICAL"}
+    ]
+    base_state["suggested_patch"] = (
+        "--- a/app.py\n"
+        "+++ b/app.py\n"
+        "-result = eval(x)\n"
+        "+result = eval(str(x))\n"
+    )
+    result = await judge_node(base_state)
+    assert result["judge_approval"] is False
+    assert "deterministic AST check" in result["judge_feedback"]
+    assert "A03:2021-Injection" in result["review_summary_markdown"]
+
