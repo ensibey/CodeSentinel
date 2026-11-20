@@ -180,6 +180,18 @@ def test_detects_ssrf_dynamic_url_and_ignores_static():
     assert all("CWE-918" in v.category for v in vulns)
 
 
+def test_detects_path_traversal_in_open():
+    code = """
+    f1 = open(f"/var/uploads/{filename}", "r")
+    f2 = open("../secrets/keys.txt", "r")
+    f3 = open("README.md", "r")
+    """
+    vulns = ASTScanner.scan_code(code, "files.py")
+    assert len(vulns) == 2
+    assert all("CWE-22" in v.category for v in vulns)
+
+
+
 
 
 

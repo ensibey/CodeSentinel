@@ -467,6 +467,35 @@ class SecurityASTVisitor(ast.NodeVisitor):
                     )
                 )
 
+        # 8. Path Traversal in File Operations (CWE-22)
+        if func_name == "open" and node.args:
+            path_arg = node.args[0]
+            is_dynamic_path = isinstance(path_arg, (ast.JoinedStr, ast.BinOp)) or (
+                isinstance(path_arg, ast.Call)
+                and isinstance(path_arg.func, ast.Attribute)
+                and path_arg.func.attr == "format"
+            )
+            has_parent_ref = (
+                isinstance(path_arg, ast.Constant)
+                and isinstance(path_arg.value, str)
+                and ".." in path_arg.value
+            )
+            if is_dynamic_path or has_parent_ref:
+                self.vulnerabilities.append(
+                    SecurityVulnerability(
+                        file_path=self.file_path,
+                        line_number=node.lineno,
+                        category="CWE-22: Path Traversal",
+                        severity="HIGH",
+                        description=(
+                            "File path in open() is dynamically constructed or contains parent directory traversal ('..'). "
+                            "Attackers may read or overwrite arbitrary files outside the intended directory."
+                        ),
+                        remediation="Resolve paths with Path.resolve() and verify path.is_relative_to(BASE_DIR) before opening.",
+                        code_snippet="open(<dynamic_path>)",
+                    )
+                )
+
         self.generic_visit(node)
 
 
