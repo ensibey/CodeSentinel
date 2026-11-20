@@ -80,3 +80,38 @@ def test_ast_syntax_error_handled_gracefully():
     invalid_code = "this is not valid python code @@ !!"
     vulns = ASTScanner.scan_code(invalid_code, "invalid.py")
     assert vulns == []
+
+
+def test_inline_ignore_wildcard():
+    code = """
+    api_key = "super_secret_token_999999"  # codesentinel: ignore
+    eval(user_input)
+    """
+    vulns = ASTScanner.scan_code(code, "suppressed.py")
+    assert len(vulns) == 1
+    assert "CWE-95" in vulns[0].category
+
+
+def test_inline_ignore_targeted_cwe():
+    code = """
+    api_key = "super_secret_token_999999"  # codesentinel: ignore[CWE-798]
+    eval(user_input)  # codesentinel: ignore[CWE-798]
+    """
+    vulns = ASTScanner.scan_code(code, "targeted.py")
+    assert len(vulns) == 1
+    assert "CWE-95" in vulns[0].category
+
+
+def test_scan_code_respects_scan_config():
+    from src.rules_config import ScanConfig
+
+    code = """
+    import os
+    os.system("ls")
+    eval(user_input)
+    """
+    cfg = ScanConfig(disabled_rules=["CWE-95"], min_severity="HIGH")
+    vulns = ASTScanner.scan_code(code, "cfg_test.py", config=cfg)
+    assert len(vulns) == 1
+    assert "CWE-78" in vulns[0].category
+

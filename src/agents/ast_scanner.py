@@ -11,9 +11,46 @@ Performs deterministic static analysis on Python code to identify:
 from __future__ import annotations
 import ast
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 
 from src.agents.state import SecurityVulnerability
+from src.rules_config import ScanConfig
+
+INLINE_IGNORE_PATTERN = re.compile(
+    r"#\s*codesentinel:\s*ignore(?:\[([^\]]+)\])?",
+    re.IGNORECASE,
+)
+
+
+def _extract_suppressions(source_code: str) -> Dict[int, Optional[Set[str]]]:
+    """
+    Map 1-based line numbers to inline suppression targets.
+
+    - None value means suppress all rules on that line (`# codesentinel: ignore`)
+    - Set[str] means suppress only matching CWE/rule tokens (`# codesentinel: ignore[CWE-798]`)
+    """
+    suppressions: Dict[int, Optional[Set[str]]] = {}
+    for lineno, line in enumerate(source_code.splitlines(), start=1):
+        match = INLINE_IGNORE_PATTERN.search(line)
+        if not match:
+            continue
+        raw_codes = match.group(1)
+        if not raw_codes:
+            suppressions[lineno] = None
+        else:
+            codes = {c.strip().upper() for c in raw_codes.split(",") if c.strip()}
+            suppressions[lineno] = codes
+    return suppressions
+
+
+def _is_suppressed(vuln: SecurityVulnerability, suppressions: Dict[int, Optional[Set[str]]]) -> bool:
+    if vuln.line_number not in suppressions:
+        return False
+    allowed = suppressions[vuln.line_number]
+    if allowed is None:
+        return True
+    cat_upper = vuln.category.upper()
+    return any(code in cat_upper for code in allowed)
 
 
 class SecurityASTVisitor(ast.NodeVisitor):
@@ -219,9 +256,15 @@ class ASTScanner:
     """Wrapper to run static AST checks across files or code snippets."""
 
     @classmethod
-    def scan_code(cls, source_code: str, file_path: str = "source.py") -> List[SecurityVulnerability]:
+    def scan_code(
+        cls,
+        source_code: str,
+        file_path: str = "source.py",
+        config: Optional[ScanConfig] = None,
+    ) -> List[SecurityVulnerability]:
         """
         Parses source code into AST and executes security checks.
+        Applies inline `# codesentinel: ignore` suppressions and optional ScanConfig filters.
         Handles syntax errors gracefully (e.g. non-python files or partial diff fragments).
         """
         if not source_code or not source_code.strip():
@@ -229,6 +272,8 @@ class ASTScanner:
 
         import textwrap
         dedented = textwrap.dedent(source_code)
+        suppressions = _extract_suppressions(dedented)
+        wrapped_offset = 0
 
         tree = None
         try:
@@ -238,9 +283,24 @@ class ASTScanner:
             try:
                 wrapped = "def _diff_context():\n" + textwrap.indent(dedented, "    ")
                 tree = ast.parse(wrapped, filename=file_path)
+                wrapped_offset = 1
             except SyntaxError:
                 return []
 
         visitor = SecurityASTVisitor(file_path=file_path)
         visitor.visit(tree)
-        return visitor.vulnerabilities
+
+        filtered: List[SecurityVulnerability] = []
+        for vuln in visitor.vulnerabilities:
+            if wrapped_offset:
+                vuln.line_number = max(1, vuln.line_number - wrapped_offset)
+            if _is_suppressed(vuln, suppressions):
+                continue
+            if config is not None:
+                if not config.meets_severity(vuln.severity):
+                    continue
+                if not config.is_rule_enabled(category=vuln.category):
+                    continue
+            filtered.append(vuln)
+
+        return filtered
