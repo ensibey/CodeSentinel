@@ -74,6 +74,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Run the full LangGraph pipeline (Scanner -> Test Gen -> Patch Creator -> Judge)",
     )
     parser.add_argument("--json", action="store_true", help="Emit findings as JSON")
+    parser.add_argument(
+        "--min-severity",
+        choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+        default=None,
+        help="Minimum severity level to report (overrides .codesentinel.toml)",
+    )
+    parser.add_argument(
+        "--fail-on",
+        choices=["LOW", "MEDIUM", "HIGH", "CRITICAL", "NONE"],
+        default="LOW",
+        help="Exit with code 1 if any finding meets or exceeds this severity (default: LOW)",
+    )
     args = parser.parse_args(argv)
 
     path = Path(args.target)
@@ -82,6 +94,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     config = ScanConfig.discover(path)
+    if args.min_severity:
+        config.min_severity = args.min_severity
+
+    def _should_fail(items: List[dict]) -> bool:
+        if args.fail_on == "NONE" or not items:
+            return False
+        threshold = SEVERITY_ORDER.get(args.fail_on, 1)
+        return any(SEVERITY_ORDER.get(str(i.get("severity", "LOW")).upper(), 1) >= threshold for i in items)
 
     if not args.full_graph and (path.is_dir() or path.suffix.lower() == ".py"):
         raw_findings, files_scanned = scan_target_static(path, config)
@@ -96,7 +116,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(
                         f"{f['file_path']}:{f['line_number']}: [{f['severity']}] {f['category']} - {f['description']}"
                     )
-        return 1 if findings else 0
+        return 1 if _should_fail(findings) else 0
 
     if path.is_dir():
         print("error: --full-graph requires a single .py or .diff/.patch file", file=sys.stderr)

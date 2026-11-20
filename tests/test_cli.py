@@ -28,3 +28,17 @@ def test_cli_clean_directory_returns_zero(tmp_path: Path, capsys):
     rc = main([str(tmp_path)])
     assert rc == 0
     assert "clean" in capsys.readouterr().out.lower()
+
+
+def test_cli_fail_on_severity_policy(tmp_path: Path, capsys):
+    # hashlib.md5 is MEDIUM severity
+    (tmp_path / "hash.py").write_text("import hashlib\nh = hashlib.md5(b'abc')\n", encoding="utf-8")
+
+    assert main([str(tmp_path), "--fail-on", "HIGH"]) == 0
+    capsys.readouterr()
+    assert main([str(tmp_path), "--fail-on", "MEDIUM"]) == 1
+    capsys.readouterr()
+    assert main([str(tmp_path), "--min-severity", "HIGH", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["findings"] == []
+
