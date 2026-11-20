@@ -1,8 +1,9 @@
 """
-Standalone CLI for running CodeSentinel static + multi-agent audits on local Python files or diffs.
+Standalone CLI for running CodeSentinel static + multi-agent audits on local Python files, directories, or diffs.
 
 Usage:
     python -m src.cli path/to/file.py
+    python -m src.cli src/ --fail-on HIGH
     python -m src.cli path/to/changes.diff --full-graph
 """
 
@@ -13,11 +14,12 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from src.agents.ast_scanner import ASTScanner
 from src.agents.graph import run_code_sentinel_workflow
-from src.agents.state import AgentState
+from src.agents.state import AgentState, SecurityVulnerability
+from src.rules_config import SEVERITY_ORDER, ScanConfig
 
 
 def _build_synthetic_diff(file_path: str, source: str) -> str:
@@ -32,12 +34,40 @@ def _build_synthetic_diff(file_path: str, source: str) -> str:
     )
 
 
+def collect_python_files(target: Path, config: ScanConfig) -> List[Path]:
+    """Collect Python files from a file or directory while respecting ScanConfig exclusions."""
+    if target.is_file():
+        return [target] if target.suffix.lower() == ".py" else []
+
+    collected: List[Path] = []
+    for path in sorted(target.rglob("*.py")):
+        rel = path.relative_to(target)
+        if config.is_path_excluded(rel) or config.is_path_excluded(path):
+            continue
+        collected.append(path)
+    return collected
+
+
+def scan_target_static(target: Path, config: ScanConfig) -> Tuple[List[SecurityVulnerability], int]:
+    """Run deterministic AST scans on a single Python file or recursively across a directory."""
+    files = collect_python_files(target, config)
+    all_findings: List[SecurityVulnerability] = []
+    for py_file in files:
+        try:
+            source = py_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        display_path = str(py_file.as_posix())
+        all_findings.extend(ASTScanner.scan_code(source, file_path=display_path, config=config))
+    return all_findings, len(files)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="codesentinel",
-        description="Run deterministic AST security checks or full LangGraph review on a local file/diff.",
+        description="Run deterministic AST security checks or full LangGraph review on local files, directories, or diffs.",
     )
-    parser.add_argument("target", help="Path to a Python (.py) file or unified diff (.diff/.patch)")
+    parser.add_argument("target", help="Path to a Python (.py) file, directory, or unified diff (.diff/.patch)")
     parser.add_argument(
         "--full-graph",
         action="store_true",
@@ -48,19 +78,19 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     path = Path(args.target)
     if not path.exists():
-        print(f"error: file not found: {path}", file=sys.stderr)
+        print(f"error: target not found: {path}", file=sys.stderr)
         return 2
 
-    content = path.read_text(encoding="utf-8")
+    config = ScanConfig.discover(path)
 
-    if not args.full_graph and path.suffix.lower() == ".py":
-        raw_findings = ASTScanner.scan_code(content, file_path=str(path.as_posix()))
+    if not args.full_graph and (path.is_dir() or path.suffix.lower() == ".py"):
+        raw_findings, files_scanned = scan_target_static(path, config)
         findings = [f.model_dump() for f in raw_findings]
         if args.json:
-            print(json.dumps(findings, indent=2))
+            print(json.dumps({"files_scanned": files_scanned, "findings": findings}, indent=2))
         else:
             if not findings:
-                print(f"{path}: clean (0 vulnerabilities detected)")
+                print(f"{path}: clean ({files_scanned} file(s) scanned, 0 vulnerabilities detected)")
             else:
                 for f in findings:
                     print(
@@ -68,6 +98,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                     )
         return 1 if findings else 0
 
+    if path.is_dir():
+        print("error: --full-graph requires a single .py or .diff/.patch file", file=sys.stderr)
+        return 2
+
+    content = path.read_text(encoding="utf-8")
     diff_text = content if path.suffix.lower() in (".diff", ".patch") else _build_synthetic_diff(path.name, content)
     initial_state: AgentState = {
         "repo_name": "local/workspace",
