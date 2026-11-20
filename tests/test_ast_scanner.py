@@ -202,6 +202,17 @@ def test_detects_unsafe_xml_imports_and_allows_defusedxml():
     assert all("CWE-611" in v.category for v in vulns)
 
 
+def test_detects_debug_mode_and_wildcard_host():
+    code = """
+    app.run(host="0.0.0.0", port=5000, debug=True)
+    """
+    vulns = ASTScanner.scan_code(code, "server.py")
+    assert len(vulns) == 2
+    assert any("CWE-489" in v.category for v in vulns)
+    assert any("CWE-605" in v.category for v in vulns)
+
+
+
 
 
 

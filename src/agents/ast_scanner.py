@@ -543,6 +543,37 @@ class SecurityASTVisitor(ast.NodeVisitor):
                     )
                 )
 
+        # 9. Active Debug Mode & Wildcard Interface Binding (CWE-489 / CWE-605)
+        if func_name == "run":
+            for kw in node.keywords:
+                if kw.arg == "debug" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                    self.vulnerabilities.append(
+                        SecurityVulnerability(
+                            file_path=self.file_path,
+                            line_number=node.lineno,
+                            category="CWE-489: Active Debug Code",
+                            severity="MEDIUM",
+                            description=(
+                                "Application server started with debug=True. "
+                                "Interactive debuggers (e.g., Werkzeug) can expose arbitrary code execution in production."
+                            ),
+                            remediation="Control debug mode strictly via environment variables (defaulting to False).",
+                            code_snippet=f"{func_name}(..., debug=True)",
+                        )
+                    )
+                elif kw.arg == "host" and isinstance(kw.value, ast.Constant) and kw.value.value == "0.0.0.0":
+                    self.vulnerabilities.append(
+                        SecurityVulnerability(
+                            file_path=self.file_path,
+                            line_number=node.lineno,
+                            category="CWE-605: Binding to All Network Interfaces",
+                            severity="LOW",
+                            description="Server binds to all network interfaces ('0.0.0.0'), potentially exposing internal services.",
+                            remediation="Bind explicitly to '127.0.0.1' locally or place behind a hardened reverse proxy.",
+                            code_snippet=f"{func_name}(..., host='0.0.0.0')",
+                        )
+                    )
+
         self.generic_visit(node)
 
 
