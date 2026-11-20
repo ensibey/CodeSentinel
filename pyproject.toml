@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codesentinel"
-version = "0.1.0"
-description = "Autonomous Multi-Agent GitHub Pull Request & Security Review System"
+version = "0.2.0"
+description = "Hybrid Python AST + Multi-Agent LangGraph Security Scanner & PR Reviewer"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Enis Doğan", email = "enisdogan@example.com"}
+    {name = "Enis Doğan", email = "enis-dogan@outlook.com"}
 ]
-keywords = ["github", "pull-request", "security", "ai-agents", "langgraph", "fastapi"]
+keywords = ["github", "pull-request", "security", "sast", "sarif", "ai-agents", "langgraph", "fastapi"]
 dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.28.0",
@@ -25,6 +25,18 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "rich>=13.7.0",
 ]
+
+[project.scripts]
+codesentinel = "src.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ensibey/CodeSentinel"
+Repository = "https://github.com/ensibey/CodeSentinel"
+Issues = "https://github.com/ensibey/CodeSentinel/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
 
 [project.optional-dependencies]
 agents = [
