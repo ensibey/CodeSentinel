@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator, Dict
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.streaming import router as streaming_router
 from src.api.webhooks import router as webhook_router
 from src.config import get_settings
 
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
 
     # Mount routers
     app.include_router(webhook_router)
+    app.include_router(streaming_router)
 
     @app.get(
         "/",
