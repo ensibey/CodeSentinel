@@ -3,34 +3,30 @@
 [![CodeSentinel CI](https://github.com/ensibey/CodeSentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/ensibey/CodeSentinel/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-10B981)
-![Tests: 75 passing](https://img.shields.io/badge/tests-75%20passing-10B981)
+![Tests: 79 passing](https://img.shields.io/badge/tests-79%20passing-10B981)
 
 Hybrid **Python AST Static Security Scanner (SAST)** and **LangGraph Multi-Agent Pull Request Reviewer**.
 
-CodeSentinel combines deterministic, sub-millisecond AST analysis (12 OWASP Top 10 / CWE rules + Shannon entropy secret detection) with a 4-agent LangGraph remediation workflow (`security_scanner` → `test_generator` → `patch_creator` → `judge`). Unlike LLM-only reviewers, the Judge node re-runs the deterministic AST scanner on every proposed patch diff to guarantee zero residual CWE patterns before approving.
+CodeSentinel combines deterministic, sub-millisecond AST analysis (12 OWASP Top 10 / CWE rules + Shannon entropy secret detection) with a 4-agent LangGraph remediation workflow (`security_scanner` → `test_generator` → `patch_creator` → `judge`), **SSE streaming API** (`/api/v1/scan/stream`), **Token-Bucket rate limiting & `X-API-Key` auth**, and **OpenTelemetry-compatible JSONL span tracing**.
 
 ---
 
 ## Architecture
 
-```text
-GitHub PR Webhook (FastAPI + HMAC) ──► Redis / ARQ Worker ──► GitDiffParser (+ lines)
-                                                                       │
-Local CLI (`codesentinel src/`) ───────────────────────────────────────┤
-                                                                       ▼
-                                                     [1] Deterministic AST Scanner
-                                                         12 OWASP/CWE Rules (CS001-CS012)
-                                                         Shannon Entropy + Inline Ignore
-                                                                       │
-                                         ┌─────────────────────────────┴────────────────────────────┐
-                                         ▼ (Local / CI Mode)                                        ▼ (--full-graph / PR Mode)
-                           Text / JSON / Markdown / SARIF 2.1.0                       LangGraph Multi-Agent Pipeline
-                           (GitHub Code Scanning compatible)                          security_scanner ─► test_generator
-                                                                                                               │
-                                                                                      judge (AST patch gate) ◄─┴─ patch_creator
-                                                                                                 │
-                                                                                                 ▼
-                                                                                      GitHub Inline PR Review
+```mermaid
+flowchart LR
+    A["GitHub PR Webhook / Local CLI"] --> B["FastAPI Gateway<br/>(HMAC / X-API-Key + Token-Bucket)"]
+    B --> C["Redis / ARQ Worker<br/>& GitDiffParser (+ lines)"]
+    B --> S["SSE Stream Endpoint<br/>/api/v1/scan/stream"]
+    C --> D["Deterministic AST Engine<br/>12 OWASP/CWE Rules + Shannon Entropy"]
+    S --> D
+    D --> E["SARIF 2.1.0 / Markdown / JSON"]
+    D --> F["LangGraph Multi-Agent Graph<br/>Scanner → TestGen → PatchCreator"]
+    F --> G["Judge Node<br/>(Deterministic AST Patch Gate)"]
+    G -->|residual CWE| F
+    G -->|approved| H["GitHub Inline PR Review"]
+    D -.-> T["SpanTracer<br/>(JSONL / OTel Latency Spans)"]
+    G -.-> T
 ```
 
 ---
